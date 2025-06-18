@@ -1,0 +1,154 @@
+{{- if .Values.n8n.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "n8n-scalable.fullname" . }}-worker
+  labels:
+    {{- include "n8n-scalable.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.n8n.worker.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "n8n-scalable.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+        prometheus.io/path: "/metrics"
+      labels:
+        {{- include "n8n-scalable.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- with .Values.n8n.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "n8n-scalable.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: n8n-worker
+          image: "{{ .Values.n8n.image.repository }}:{{ .Values.n8n.image.tag }}"
+          imagePullPolicy: {{ .Values.n8n.image.pullPolicy }}
+          command:
+            - n8n
+            - worker
+          ports:
+            {{- if .Values.n8n.queue.health.enabled }}
+            - name: health
+              containerPort: {{ .Values.n8n.queue.health.port }}
+              protocol: TCP
+            {{- end }}
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
+          env:
+            # Queue mode - worker instance
+            - name: EXECUTIONS_PROCESS
+              value: "queue"
+            - name: N8N_PROCESS_MODE
+              value: "worker"
+            - name: QUEUE_BULL_CONCURRENCY
+              value: {{ .Values.n8n.queue.concurrency | quote }}
+            {{- range $key, $value := .Values.n8n.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            # Redis connection
+            - name: QUEUE_BULL_REDIS_HOST
+              value: {{ .Values.redis.enabled | ternary "redis-master" .Values.n8n.env.QUEUE_BULL_REDIS_HOST | quote }}
+            - name: QUEUE_BULL_REDIS_PORT
+              value: {{ .Values.n8n.env.QUEUE_BULL_REDIS_PORT | quote }}
+            # Database connection
+            - name: DB_POSTGRESDB_HOST
+              value: {{ .Values.postgresql.enabled | ternary "postgresql" .Values.n8n.env.DB_POSTGRESDB_HOST | quote }}
+            # Worker-specific settings
+            - name: N8N_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Secrets
+            {{- if .Values.n8n.secrets.createSecret }}
+            - name: N8N_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "n8n-scalable.fullname" . }}-secret
+                  key: N8N_ENCRYPTION_KEY
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "n8n-scalable.fullname" . }}-config
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  if [ -f /tmp/worker-healthy ]; then
+                    exit 0
+                  else
+                    exit 1
+                  fi
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  # Check if worker is connected to Redis and processing jobs
+                  n8n worker:health || exit 1
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.n8n.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /home/node/.n8n
+            - name: tmp
+              mountPath: /tmp
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - |
+                    # Graceful shutdown - stop accepting new jobs
+                    touch /tmp/worker-stopping
+                    # Wait for current jobs to complete (max 25 seconds)
+                    sleep 25
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.n8n.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.n8n.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.n8n.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }} 

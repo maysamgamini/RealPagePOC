@@ -1,0 +1,52 @@
+# Example Terraform Variables for Azure AKS Deployment
+# Copy this file to terraform.tfvars and update with your values
+
+# Azure Authentication (Required)
+# Get these values from your Azure service principal
+azure_subscription_id = "your-subscription-id-here"
+azure_tenant_id       = "your-tenant-id-here"
+azure_client_id       = "your-client-id-here"
+azure_client_secret   = "your-client-secret-here"
+
+# Azure Configuration
+azure_location = "East US"  # or "West Europe", "Southeast Asia", etc.
+
+# Environment Configuration
+environment  = "dev"
+cluster_name = "n8n-dev"
+
+# Networking
+vnet_cidr            = "10.0.0.0/16"
+aks_subnet_cidr      = "10.0.1.0/24"
+services_subnet_cidr = "10.0.2.0/24"
+
+# AKS Node Pools (adjust for your workload)
+system_node_count = 2
+system_node_size  = "Standard_D2s_v3"    # 2 vCPU, 8 GB RAM
+
+main_node_count = 2
+main_node_size  = "Standard_D4s_v3"      # 4 vCPU, 16 GB RAM
+
+worker_node_count = 3
+worker_node_size  = "Standard_D8s_v3"    # 8 vCPU, 32 GB RAM
+
+# Redis Configuration
+redis_capacity  = 1           # For production: 6 or higher
+redis_family    = "C"         # C=Basic/Standard, P=Premium
+redis_sku_name  = "Standard"  # Basic, Standard, Premium
+
+# PostgreSQL Configuration
+postgres_version          = "15"
+postgres_sku_name         = "B_Standard_B1ms"  # For production: GP_Standard_D4s_v3
+postgres_storage_mb       = 32768              # 32 GB, for production: 1048576 (1TB)
+postgres_admin_username   = "n8n_admin"
+postgres_admin_password   = "YourSecurePassword123!"  # Use a strong password
+
+# Additional Tags
+tags = {
+  Environment = "dev"
+  Owner       = "your-name"
+  Project     = "n8n-scalable"
+  Terraform   = "true"
+  CostCenter  = "engineering"
+} 

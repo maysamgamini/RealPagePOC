@@ -1,0 +1,36 @@
+# Example Terraform Variables for AWS EKS Deployment
+# Copy this file to terraform.tfvars and update with your values
+
+# AWS Configuration
+aws_region  = "us-west-2"  # Change to your preferred region
+aws_profile = "default"    # Use "default" or your specific AWS profile name
+
+# Environment Configuration
+environment  = "dev"       # dev, staging, or prod
+cluster_name = "n8n-dev"   # Will be used for all resource naming
+
+# Kubernetes Configuration
+kubernetes_version = "1.28"  # EKS supported version
+
+# Networking Configuration
+vpc_cidr         = "10.0.0.0/16"
+private_subnets  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+public_subnets   = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+# Security Configuration
+cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]  # Restrict this for production
+
+# Database Configuration
+postgres_instance_class = "db.t3.micro"  # For production: db.t3.small or larger
+
+# Redis Configuration  
+redis_node_type = "cache.t3.micro"  # For production: cache.t3.small or larger
+
+# Resource Tags
+tags = {
+  Environment = "dev"
+  Owner       = "your-name"
+  Project     = "n8n-scalable"
+  Terraform   = "true"
+  CostCenter  = "engineering"
+} 

@@ -1,0 +1,298 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: n8n-test-framework
+  namespace: n8n-test
+data:
+  test-config.yaml: |
+    # n8n Test Framework Configuration
+    tests:
+      # Component Health Tests
+      health:
+        - name: "Redis Connection Test"
+          type: "redis"
+          target: "redis-master:6379"
+          timeout: 10s
+          expected: "PONG"
+          
+        - name: "PostgreSQL Connection Test"
+          type: "postgres"
+          target: "postgresql:5432"
+          database: "n8n"
+          timeout: 15s
+          
+        - name: "n8n Main Pod Health"
+          type: "http"
+          target: "http://n8n-main:5678/healthz"
+          timeout: 30s
+          expected_status: 200
+          
+        - name: "Event Bridge Health"
+          type: "http"
+          target: "http://event-bridge:8080/health"
+          timeout: 10s
+          expected_status: 200
+
+      # Queue Processing Tests
+      queue:
+        - name: "Queue Job Submission"
+          type: "queue_test"
+          target: "redis-master:6379"
+          test_jobs: 100
+          concurrency: 10
+          timeout: 60s
+          
+        - name: "Worker Processing Verification"
+          type: "worker_test"
+          target: "redis-master:6379"
+          expected_workers: 3
+          timeout: 30s
+          
+        - name: "Queue Metrics Verification"
+          type: "metrics_test"
+          target: "http://n8n-worker:9464/metrics"
+          metrics:
+            - "bull_jobs_completed_total"
+            - "bull_jobs_failed_total"
+            - "bull_queue_size"
+
+      # Redis Streams Tests
+      streams:
+        - name: "Stream Creation Test"
+          type: "stream_test"
+          target: "redis-master:6379"
+          streams:
+            - "retell-events"
+            - "twilio-events" 
+            - "property-events"
+          timeout: 15s
+          
+        - name: "Event Bridge Consumer Test"
+          type: "consumer_test"
+          target: "redis-master:6379"
+          consumer_group: "n8n-event-bridge"
+          test_events: 50
+          timeout: 120s
+          
+        - name: "Webhook Delivery Test"
+          type: "webhook_test"
+          target: "http://n8n-main:5678/webhook"
+          events: 10
+          timeout: 30s
+
+      # Scalability Tests
+      scalability:
+        - name: "Worker HPA Test"
+          type: "hpa_test"
+          target: "n8n-worker"
+          load_duration: "300s"
+          expected_min_pods: 2
+          expected_max_pods: 20
+          cpu_threshold: 70
+          memory_threshold: 80
+          
+        - name: "Queue Stress Test"
+          type: "stress_test"
+          target: "redis-master:6379"
+          concurrent_jobs: 1000
+          job_duration: "5s"
+          test_duration: "600s"
+          success_rate: 95
+          
+        - name: "Concurrent Workflow Execution"
+          type: "workflow_test"
+          target: "http://n8n-main:5678"
+          concurrent_workflows: 50
+          workflow_complexity: "medium"
+          test_duration: "300s"
+          
+        - name: "Redis Streams Throughput"
+          type: "stream_throughput"
+          target: "redis-master:6379"
+          events_per_second: 1000
+          test_duration: "180s"
+          streams: 3
+
+      # Resilience Tests  
+      resilience:
+        - name: "Redis Failover Test"
+          type: "failover_test"
+          target: "redis"
+          action: "kill_master"
+          recovery_time: "60s"
+          
+        - name: "Worker Pod Failure Test"
+          type: "pod_failure"
+          target: "n8n-worker"
+          failure_count: 2
+          recovery_time: "120s"
+          
+        - name: "Network Partition Test"
+          type: "network_test"
+          target: "n8n-worker"
+          partition_duration: "60s"
+          
+        - name: "Database Connection Loss"
+          type: "db_failure"
+          target: "postgresql"
+          failure_duration: "30s"
+
+      # Performance Tests
+      performance:
+        - name: "Workflow Execution Latency"
+          type: "latency_test"
+          target: "http://n8n-main:5678"
+          test_workflows: 100
+          max_latency: "5s"
+          p95_latency: "2s"
+          
+        - name: "Queue Processing Rate"
+          type: "rate_test"
+          target: "redis-master:6379"
+          jobs_per_minute: 1000
+          test_duration: "300s"
+          
+        - name: "Memory Usage Under Load"
+          type: "memory_test"
+          targets:
+            - "n8n-main"
+            - "n8n-worker"
+            - "redis-master"
+          max_memory_usage: "80%"
+          test_duration: "600s"
+
+    # Test Execution Configuration
+    execution:
+      parallel: true
+      retry_count: 3
+      timeout_default: "60s"
+      cleanup_after: true
+      
+      # Test Environments
+      environments:
+        - name: "minikube"
+          context: "minikube"
+          namespace: "n8n-test"
+          
+        - name: "eks"
+          context: "arn:aws:eks:us-west-2:123456789012:cluster/n8n-dev"
+          namespace: "n8n-test"
+          
+        - name: "aks"
+          context: "n8n-aks-cluster"
+          namespace: "n8n-test"
+
+    # Test Data Templates
+    test_data:
+      workflow_simple: |
+        {
+          "name": "Test Workflow Simple",
+          "nodes": [
+            {
+              "name": "Start",
+              "type": "n8n-nodes-base.start",
+              "position": [240, 300]
+            },
+            {
+              "name": "Wait",
+              "type": "n8n-nodes-base.wait",
+              "position": [440, 300],
+              "parameters": {
+                "amount": 1,
+                "unit": "seconds"
+              }
+            }
+          ],
+          "connections": {
+            "Start": {
+              "main": [
+                [
+                  {
+                    "node": "Wait",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            }
+          }
+        }
+        
+      workflow_complex: |
+        {
+          "name": "Test Workflow Complex",
+          "nodes": [
+            {
+              "name": "Start",
+              "type": "n8n-nodes-base.start",
+              "position": [240, 300]
+            },
+            {
+              "name": "HTTP Request",
+              "type": "n8n-nodes-base.httpRequest",
+              "position": [440, 200],
+              "parameters": {
+                "url": "https://httpbin.org/delay/2",
+                "options": {}
+              }
+            },
+            {
+              "name": "Function",
+              "type": "n8n-nodes-base.function",
+              "position": [640, 200],
+              "parameters": {
+                "functionCode": "return [{json: {processed: true, timestamp: new Date().toISOString()}}];"
+              }
+            },
+            {
+              "name": "Wait",
+              "type": "n8n-nodes-base.wait",
+              "position": [440, 400],
+              "parameters": {
+                "amount": 3,
+                "unit": "seconds"
+              }
+            }
+          ],
+          "connections": {
+            "Start": {
+              "main": [
+                [
+                  {
+                    "node": "HTTP Request",
+                    "type": "main",
+                    "index": 0
+                  },
+                  {
+                    "node": "Wait",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "HTTP Request": {
+              "main": [
+                [
+                  {
+                    "node": "Function",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            }
+          }
+        }
+
+      stream_event: |
+        {
+          "event_type": "test_event",
+          "source": "test_framework",
+          "timestamp": "2024-01-01T00:00:00Z",
+          "data": {
+            "test_id": "{{TEST_ID}}",
+            "sequence": "{{SEQUENCE}}",
+            "payload": "test_data_{{RANDOM}}"
+          }
+        } 

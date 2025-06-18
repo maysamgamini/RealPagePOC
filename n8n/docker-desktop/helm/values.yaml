@@ -1,0 +1,308 @@
+# Default values for n8n-scalable
+# This is a YAML-formatted file.
+
+global:
+  storageClass: ""
+  imageRegistry: ""
+
+# n8n configuration
+n8n:
+  image:
+    repository: n8nio/n8n
+    tag: "1.19.4"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+
+  # Queue mode configuration
+  queue:
+    enabled: true
+    mode: "queue"  # Options: main, worker, queue
+    concurrency: 10
+    health:
+      enabled: true
+      port: 5679
+
+  # Main instance configuration (UI/API/Webhook handler)
+  main:
+    enabled: true
+    replicaCount: 2
+    
+    service:
+      type: ClusterIP
+      port: 5678
+      targetPort: 5678
+      annotations: {}
+    
+    ingress:
+      enabled: true
+      className: "nginx"
+      annotations:
+        nginx.ingress.kubernetes.io/ssl-redirect: "true"
+        nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+        cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      hosts:
+        - host: n8n.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - secretName: n8n-tls
+          hosts:
+            - n8n.example.com
+
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+    # Liveness and readiness probes
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 5678
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 5678
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  # Worker instances configuration
+  worker:
+    enabled: true
+    replicaCount: 3
+    
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 1000m
+        memory: 2Gi
+
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+    # Horizontal Pod Autoscaler
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 20
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+          - type: Pods
+            value: 4
+            periodSeconds: 15
+          selectPolicy: Max
+
+  # Environment variables
+  env:
+    # Queue configuration
+    EXECUTIONS_PROCESS: "queue"
+    QUEUE_BULL_REDIS_HOST: "redis-master"
+    QUEUE_BULL_REDIS_PORT: "6379"
+    QUEUE_BULL_REDIS_DB: "0"
+    QUEUE_BULL_REDIS_PASSWORD: ""
+    QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD: "5000"
+    QUEUE_BULL_MAX_STALLED_COUNT: "1"
+    
+    # Redis Streams configuration
+    REDIS_STREAMS_ENABLED: "true"
+    REDIS_STREAMS_CONSUMER_GROUP: "n8n-consumers"
+    REDIS_STREAMS_BLOCK_TIME: "5000"
+    REDIS_STREAMS_MAX_LEN: "10000"
+    
+    # General n8n configuration
+    N8N_PROTOCOL: "https"
+    N8N_HOST: "n8n.example.com"
+    N8N_PORT: "5678"
+    WEBHOOK_URL: "https://n8n.example.com/"
+    GENERIC_TIMEZONE: "UTC"
+    
+    # Security
+    N8N_BASIC_AUTH_ACTIVE: "true"
+    N8N_BASIC_AUTH_USER: "admin"
+    N8N_BASIC_AUTH_PASSWORD: "changeme"
+    
+    # Metrics and monitoring
+    N8N_METRICS: "true"
+    N8N_DIAGNOSTICS_ENABLED: "false"
+    
+    # Database
+    DB_TYPE: "postgresdb"
+    DB_POSTGRESDB_HOST: "postgresql"
+    DB_POSTGRESDB_PORT: "5432"
+    DB_POSTGRESDB_DATABASE: "n8n"
+    DB_POSTGRESDB_USER: "n8n"
+    DB_POSTGRESDB_PASSWORD: "n8n"
+
+  # Secrets (use external secret management in production)
+  secrets:
+    createSecret: true
+    existingSecret: ""
+    secretKeys:
+      N8N_ENCRYPTION_KEY: "your-encryption-key-here"
+      WEBHOOK_URL: "https://n8n.example.com/"
+
+# Redis configuration
+redis:
+  enabled: true
+  architecture: replication
+  auth:
+    enabled: false
+  
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+  # Redis Streams configuration
+  streams:
+    maxLen: 10000
+    retention: "7d"
+    
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+  auth:
+    database: n8n
+    username: n8n
+    password: n8n
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+
+# Event Bridge Service (for Redis Streams integration)
+eventBridge:
+  enabled: true
+  replicaCount: 2
+  
+  image:
+    repository: your-registry/n8n-event-bridge
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 8080
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  
+  env:
+    REDIS_HOST: "redis-master"
+    REDIS_PORT: "6379"
+    N8N_WEBHOOK_URL: "http://n8n-main:5678/webhook"
+    STREAM_NAMES: "retell-events,twilio-events,property-events"
+
+# Monitoring
+monitoring:
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    labels:
+      release: prometheus
+  
+  grafana:
+    dashboards:
+      enabled: true
+      namespace: monitoring
+
+# Network Policies
+networkPolicy:
+  enabled: false
+  allowExternal: true
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Security Context
+securityContext:
+  enabled: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  runAsNonRoot: true
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Common labels
+commonLabels: {}
+commonAnnotations: {} 

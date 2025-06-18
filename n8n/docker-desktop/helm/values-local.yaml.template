@@ -1,0 +1,235 @@
+# Docker Desktop / Minikube optimized values for n8n-scalable
+# Reduced resource requirements for local development
+# 
+# IMPORTANT: Copy this file to values-local.yaml and replace placeholder values
+# cp values-local.yaml.template values-local.yaml
+
+global:
+  storageClass: "standard"
+  imageRegistry: ""
+
+# n8n configuration
+n8n:
+  image:
+    repository: n8nio/n8n
+    tag: "1.19.4"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+
+  # Queue mode configuration
+  queue:
+    enabled: true
+    mode: "queue"
+    concurrency: 5  # Reduced for local
+    health:
+      enabled: true
+      port: 5679
+
+  # Main instance configuration (UI/API/Webhook handler)
+  main:
+    enabled: true
+    replicaCount: 1  # Single instance for local
+    
+    service:
+      type: NodePort  # Changed to NodePort for local access
+      port: 5678
+      targetPort: 5678
+      nodePort: 30678  # Fixed port for easy access
+      annotations: {}
+    
+    ingress:
+      enabled: false  # Disabled for local development
+    
+    resources:
+      limits:
+        cpu: 500m     # Reduced for local
+        memory: 1Gi   # Reduced for local
+      requests:
+        cpu: 250m     # Reduced for local
+        memory: 512Mi # Reduced for local
+
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+    # Liveness and readiness probes
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 5678
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 5678
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  # Worker instances configuration
+  worker:
+    enabled: true
+    replicaCount: 2  # Reduced for local
+    
+    resources:
+      limits:
+        cpu: 1000m    # Reduced for local
+        memory: 2Gi   # Reduced for local
+      requests:
+        cpu: 500m     # Reduced for local
+        memory: 1Gi   # Reduced for local
+
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+    # Horizontal Pod Autoscaler - simplified
+    autoscaling:
+      enabled: false  # Disabled for local development
+
+  # Environment variables
+  env:
+    # Queue configuration
+    EXECUTIONS_PROCESS: "queue"
+    QUEUE_BULL_REDIS_HOST: "n8n-scalable-redis-master"
+    QUEUE_BULL_REDIS_PORT: "6379"
+    QUEUE_BULL_REDIS_DB: "0"
+    QUEUE_BULL_REDIS_PASSWORD: ""
+    QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD: "5000"
+    QUEUE_BULL_MAX_STALLED_COUNT: "1"
+    
+    # Redis Streams configuration
+    REDIS_STREAMS_ENABLED: "true"
+    REDIS_STREAMS_CONSUMER_GROUP: "n8n-consumers"
+    REDIS_STREAMS_BLOCK_TIME: "5000"
+    REDIS_STREAMS_MAX_LEN: "1000"  # Reduced for local
+    
+    # General n8n configuration
+    N8N_PROTOCOL: "http"           # Changed to HTTP for local
+    N8N_HOST: "localhost"          # Changed for local access
+    N8N_PORT: "5678"
+    WEBHOOK_URL: "http://localhost:30678/"  # Using NodePort
+    GENERIC_TIMEZONE: "UTC"
+    
+    # Security - CHANGE THESE VALUES!
+    N8N_BASIC_AUTH_ACTIVE: "true"
+    N8N_BASIC_AUTH_USER: "admin"
+    N8N_BASIC_AUTH_PASSWORD: "CHANGE_ME_ADMIN_PASSWORD"  # Change this!
+    
+    # Metrics and monitoring
+    N8N_METRICS: "true"
+    N8N_DIAGNOSTICS_ENABLED: "false"
+    
+    # Database - CHANGE PASSWORD!
+    DB_TYPE: "postgresdb"
+    DB_POSTGRESDB_HOST: "n8n-scalable-postgresql"
+    DB_POSTGRESDB_PORT: "5432"
+    DB_POSTGRESDB_DATABASE: "n8n"
+    DB_POSTGRESDB_USER: "n8n"
+    DB_POSTGRESDB_PASSWORD: "CHANGE_ME_DB_PASSWORD"  # Change this!
+
+  # Secrets - CHANGE THESE VALUES!
+  secrets:
+    createSecret: true
+    existingSecret: ""
+    secretKeys:
+      N8N_ENCRYPTION_KEY: "CHANGE_ME_32_CHAR_ENCRYPTION_KEY"  # Must be 32 characters!
+      WEBHOOK_URL: "http://localhost:30678/"
+
+# Redis configuration - optimized for local
+redis:
+  enabled: true
+  architecture: standalone  # Single instance for local
+  auth:
+    enabled: false
+  
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi  # Reduced for local
+    resources:
+      limits:
+        cpu: 250m   # Reduced for local
+        memory: 512Mi  # Reduced for local
+      requests:
+        cpu: 100m   # Reduced for local
+        memory: 256Mi  # Reduced for local
+  
+  # No replica for local development
+  replica:
+    replicaCount: 0
+
+  # Redis Streams configuration
+  streams:
+    maxLen: 1000   # Reduced for local
+    retention: "1d"  # Reduced for local
+    
+  metrics:
+    enabled: false  # Disabled for local
+
+# PostgreSQL configuration - optimized for local
+# CHANGE THE PASSWORD!
+postgresql:
+  enabled: true
+  auth:
+    database: n8n
+    username: n8n
+    password: CHANGE_ME_DB_PASSWORD  # Change this to match above!
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 2Gi  # Reduced for local
+    resources:
+      limits:
+        cpu: 500m     # Reduced for local
+        memory: 1Gi   # Reduced for local
+      requests:
+        cpu: 250m     # Reduced for local
+        memory: 512Mi # Reduced for local
+
+# Event Bridge Service - disabled for simplicity
+eventBridge:
+  enabled: false
+
+# Monitoring - disabled for local
+monitoring:
+  serviceMonitor:
+    enabled: false
+
+# Network Policies - disabled for local
+networkPolicy:
+  enabled: false
+
+# Pod Disruption Budget - disabled for local
+podDisruptionBudget:
+  enabled: false
+
+# Security Context
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  runAsNonRoot: true
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+
+# Common labels
+commonLabels:
+  environment: "development"
+  deployment: "docker-desktop"
+
+commonAnnotations: {} 

@@ -1,0 +1,194 @@
+# ==============================================
+# RealPage n8n Infrastructure Project
+# ==============================================
+
+# Terraform Files
+# ================
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.terraform/
+.terraform.lock.hcl
+terraform.tfplan
+terraform.tfplan.*
+crash.log
+crash.*.log
+
+# Kubernetes & Helm
+# ==================
+*.kubeconfig
+kubeconfig*
+helm-debug.log
+charts/*.tgz
+charts/*/charts/
+charts/*/requirements.lock
+
+# Docker
+# ======
+.dockerignore
+Dockerfile.*
+docker-compose.override.yml
+docker-compose.*.yml
+
+# Cloud Provider Credentials
+# ===========================
+# AWS
+.aws/
+aws-credentials
+*.pem
+*.p12
+*.pfx
+
+# Azure
+.azure/
+azure-credentials
+
+# GCP
+.gcp/
+gcp-credentials
+*.json
+
+# Secrets & Credentials
+# =====================
+*.key
+*.crt
+*.csr
+*.p8
+secrets/
+secret.yaml
+secrets.yaml
+*-secret.yaml
+*-secrets.yaml
+.env
+.env.*
+!.env.example
+config.json
+credentials.json
+auth.json
+
+# Development Files
+# =================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+# ====
+*.log
+logs/
+log/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Node.js (if any)
+# ================
+node_modules/
+npm-debug.log
+yarn-error.log
+.npm
+.yarn-integrity
+
+# Python (if any)
+# ================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Backup Files
+# ============
+*.bak
+*.backup
+*.orig
+*.tmp
+*~
+
+# OS Generated Files
+# ==================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build Artifacts
+# ================
+dist/
+build/
+target/
+*.tar.gz
+*.zip
+
+# Local Configuration
+# ===================
+local.yaml
+local.yml
+*-local.yaml
+*-local.yml
+override.yaml
+override.yml
+custom.yaml
+custom.yml
+
+# Monitoring & Metrics
+# ====================
+prometheus.yml
+grafana.ini
+alertmanager.yml
+
+# Certificate Files
+# ==================
+*.pem
+*.key
+*.crt
+*.csr
+*.cer
+*.der
+*.p7b
+*.p7c
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+
+# Temporary Files
+# ===============
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+
+# Editor Files
+# ============
+*.sublime-project
+*.sublime-workspace
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local Development Overrides
+# ============================
+values-dev.yaml
+values-staging.yaml
+values-prod.yaml
+values-production.yaml
+*-override.yaml
+*-overrides.yaml 

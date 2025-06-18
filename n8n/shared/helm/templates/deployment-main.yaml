@@ -1,0 +1,105 @@
+{{- if .Values.n8n.main.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "n8n-scalable.fullname" . }}-main
+  labels:
+    {{- include "n8n-scalable.labels" . | nindent 4 }}
+    app.kubernetes.io/component: main
+spec:
+  replicas: {{ .Values.n8n.main.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "n8n-scalable.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: main
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "n8n-scalable.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: main
+    spec:
+      {{- with .Values.n8n.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "n8n-scalable.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: n8n
+          image: "{{ .Values.n8n.image.repository }}:{{ .Values.n8n.image.tag }}"
+          imagePullPolicy: {{ .Values.n8n.image.pullPolicy }}
+          command:
+            - n8n
+            - start
+            - --tunnel
+          ports:
+            - name: http
+              containerPort: 5678
+              protocol: TCP
+            {{- if .Values.n8n.queue.health.enabled }}
+            - name: health
+              containerPort: {{ .Values.n8n.queue.health.port }}
+              protocol: TCP
+            {{- end }}
+          env:
+            # Queue mode - main instance
+            - name: EXECUTIONS_PROCESS
+              value: "main"
+            - name: N8N_PROCESS_MODE
+              value: "main"
+            {{- range $key, $value := .Values.n8n.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            # Redis connection
+            - name: QUEUE_BULL_REDIS_HOST
+              value: {{ .Values.redis.enabled | ternary "redis-master" .Values.n8n.env.QUEUE_BULL_REDIS_HOST | quote }}
+            - name: QUEUE_BULL_REDIS_PORT
+              value: {{ .Values.n8n.env.QUEUE_BULL_REDIS_PORT | quote }}
+            # Database connection
+            - name: DB_POSTGRESDB_HOST
+              value: {{ .Values.postgresql.enabled | ternary "postgresql" .Values.n8n.env.DB_POSTGRESDB_HOST | quote }}
+            # Secrets
+            {{- if .Values.n8n.secrets.createSecret }}
+            - name: N8N_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "n8n-scalable.fullname" . }}-secret
+                  key: N8N_ENCRYPTION_KEY
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "n8n-scalable.fullname" . }}-config
+          livenessProbe:
+            {{- toYaml .Values.n8n.main.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.n8n.main.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.n8n.main.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /home/node/.n8n
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.n8n.main.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.n8n.main.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.n8n.main.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }} 
