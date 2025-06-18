@@ -1,555 +1,528 @@
-# Infrastructure Setup Guide - n8n Scalable Deployment Platform
+# Infrastructure Setup Guide - Voice AI Property Management POC
 
 ## Overview
-This document outlines the comprehensive infrastructure setup for the n8n Scalable Deployment Platform, covering multi-cloud deployments with Terraform automation, Kubernetes orchestration, and modern DevOps practices.
+This document outlines the infrastructure setup for the Voice AI Property Management POC, including n8n deployment, Retell AI integration, Twilio configuration, and Google Sheets connectivity.
 
 ## Prerequisites
-- **Cloud Accounts**: AWS and/or Azure account with appropriate permissions
-- **Local Tools**: kubectl, helm, terraform, docker
-- **Domain** (optional): For custom SSL certificates and DNS
-- **Git**: For version control and GitOps workflows
+- **Cloud Account**: AWS or Azure account with appropriate permissions
+- **Domain**: For SSL certificates and webhook endpoints
+- **API Keys**: Retell AI, Twilio, and Google Sheets API credentials
+- **Local Tools**: Docker, kubectl (optional for cloud deployment)
 
 ## Architecture Overview
 
-### Multi-Cloud Support
+### System Components
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Load Balancer                            │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│                  n8n Main Pods (2)                         │
-│  - UI/API Server                                            │
-│  - Webhook Handler                                          │
-│  - Job Dispatcher (BullMQ)                                  │
-│  - Scheduler                                                │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                ┌─────▼─────┐
-                │   Redis   │
-                │ Cluster   │
-                │(Queue +   │
-                │ Streams)  │
-                └─────┬─────┘
-                      │
-    ┌─────────────────┼─────────────────┐
-    │                 │                 │
-┌───▼───┐         ┌───▼───┐         ┌───▼───┐
-│ n8n   │         │ n8n   │         │ n8n   │
-│Worker │   ...   │Worker │   ...   │Worker │
-│ Pod   │         │ Pod   │         │ Pod   │
-│(HPA)  │         │(2-20) │         │(Auto) │
-└───────┘         └───────┘         └───────┘
+│                Voice AI Property Management                 │
+├─────────────────────────────────────────────────────────────┤
+│  Tenant → Phone Call → Twilio → Retell AI → n8n            │
+│                          ↓         ↓        ↓              │
+│                     Call Routing   NLP   Workflows          │
+│                          ↓         ↓        ↓              │
+│                     Voice Response ↓   Google Sheets       │
+│                          ↓         ↓        ↓              │
+│                     SMS/Email → Logging → Data Updates     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Phase 1: AWS EKS Deployment
+## Phase 1: n8n Infrastructure Setup
 
-### 1.1 Prerequisites Setup
+### Option A: Cloud Deployment (Recommended)
 
-#### Install Required Tools
+#### 1.1 AWS EC2 Setup
 ```bash
-# AWS CLI
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-sudo ./aws/install
+# Launch EC2 instance
+aws ec2 run-instances \
+  --image-id ami-0c55b159cbfafe1d0 \
+  --instance-type t3.medium \
+  --key-name your-key-pair \
+  --security-group-ids sg-your-security-group \
+  --subnet-id subnet-your-subnet
 
-# Terraform
-wget https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
-unzip terraform_1.6.0_linux_amd64.zip
-sudo mv terraform /usr/local/bin/
-
-# kubectl
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-
-# Helm
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+# Connect to instance
+ssh -i your-key.pem ec2-user@your-instance-ip
 ```
 
-#### Configure AWS Credentials
+#### 1.2 Docker Installation
 ```bash
-aws configure
-# Enter your AWS Access Key ID, Secret Access Key, Region, and Output format
+# Install Docker
+sudo yum update -y
+sudo yum install -y docker
+sudo service docker start
+sudo usermod -a -G docker ec2-user
+
+# Install Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
 ```
 
-### 1.2 EKS Infrastructure Deployment
+#### 1.3 n8n Deployment
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=CHANGE_ME_ADMIN_PASSWORD
+      - N8N_HOST=your-domain.com
+      - N8N_PROTOCOL=https
+      - N8N_PORT=5678
+      - WEBHOOK_URL=https://your-domain.com/
+      - GENERIC_TIMEZONE=America/New_York
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - n8n-network
 
-#### Navigate to AWS EKS Directory
+  postgres:
+    image: postgres:13
+    container_name: n8n-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=n8n
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=CHANGE_ME_DB_PASSWORD
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - n8n-network
+
+volumes:
+  n8n_data:
+  postgres_data:
+
+networks:
+  n8n-network:
+    driver: bridge
+```
+
+#### 1.4 SSL Certificate Setup
 ```bash
-cd n8n/aws-eks/terraform
+# Install Certbot
+sudo yum install -y certbot python3-certbot-nginx
+
+# Obtain SSL certificate
+sudo certbot certonly --standalone -d your-domain.com
+
+# Configure Nginx reverse proxy
+sudo yum install -y nginx
 ```
 
-#### Configure Terraform Variables
-```hcl
-# terraform.tfvars
-aws_region = "us-west-2"
-aws_profile = "default"
-environment = "production"
-cluster_name = "n8n-scalable-prod"
+```nginx
+# /etc/nginx/conf.d/n8n.conf
+server {
+    listen 80;
+    server_name your-domain.com;
+    return 301 https://$server_name$request_uri;
+}
 
-# VPC Configuration
-vpc_cidr = "10.0.0.0/16"
-private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-public_subnets = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
 
-# EKS Configuration
-kubernetes_version = "1.28"
-cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
+    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
 
-# Database Configuration
-postgres_instance_class = "db.t3.medium"
-
-# Redis Configuration
-redis_node_type = "cache.t3.medium"
-
-# Tags
-tags = {
-  Project = "n8n-scalable"
-  Environment = "production"
-  Owner = "devops-team"
+    location / {
+        proxy_pass http://localhost:5678;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 ```
 
-#### Deploy Infrastructure
+### Option B: Local Development Setup
+
+#### 1.1 Local Docker Setup
 ```bash
-# Initialize Terraform
-terraform init
+# Clone repository
+git clone https://github.com/your-org/voice-ai-property-management.git
+cd voice-ai-property-management
 
-# Plan deployment
-terraform plan -var-file="terraform.tfvars"
+# Copy environment template
+cp .env.example .env
 
-# Apply configuration
-terraform apply -var-file="terraform.tfvars"
-
-# Note: This creates:
-# - VPC with public/private subnets
-# - EKS cluster with managed node groups
-# - ElastiCache Redis cluster
-# - RDS PostgreSQL database
-# - IAM roles and policies
-# - Security groups
-# - Secrets Manager entries
+# Edit .env with your credentials
+nano .env
 ```
 
-#### Update Kubeconfig
-```bash
-aws eks update-kubeconfig --region us-west-2 --name n8n-scalable-prod
+```env
+# .env file
+N8N_BASIC_AUTH_USER=admin
+N8N_BASIC_AUTH_PASSWORD=your-secure-password
+POSTGRES_PASSWORD=your-db-password
+RETELL_AI_API_KEY=your-retell-ai-key
+TWILIO_ACCOUNT_SID=your-twilio-sid
+TWILIO_AUTH_TOKEN=your-twilio-token
+GOOGLE_SHEETS_CREDENTIALS=your-google-credentials
 ```
 
-### 1.3 Deploy n8n Application
-
-#### Install Helm Chart
+#### 1.2 Start Services
 ```bash
-cd ../helm
+# Start n8n and database
+docker-compose up -d
 
-# Add required Helm repositories
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo update
-
-# Install n8n with AWS-optimized values
-helm upgrade --install n8n-scalable ./charts/n8n-scalable \
-  --namespace n8n \
-  --create-namespace \
-  --values values-aws.yaml \
-  --wait \
-  --timeout 10m
-```
-
-#### Verify Deployment
-```bash
-# Check pod status
-kubectl get pods -n n8n
-
-# Check services
-kubectl get svc -n n8n
-
-# Check ingress
-kubectl get ingress -n n8n
+# Check status
+docker-compose ps
 
 # View logs
-kubectl logs -n n8n -l app.kubernetes.io/name=n8n-scalable
+docker-compose logs -f n8n
 ```
 
-## Phase 2: Azure AKS Deployment
+## Phase 2: External Service Setup
 
-### 2.1 Prerequisites Setup
+### 2.1 Retell AI Configuration
 
-#### Install Azure CLI
+#### Create Retell AI Account
+1. Sign up at [Retell AI](https://retell.ai)
+2. Create a new project
+3. Generate API key
+4. Configure voice model and settings
+
+#### API Integration
+```javascript
+// Retell AI webhook configuration in n8n
+const retellConfig = {
+  apiKey: "{{$env.RETELL_AI_API_KEY}}",
+  endpoint: "https://api.retell.ai/v1/",
+  voiceModel: "eleven_labs_turbo",
+  language: "en-US"
+};
+```
+
+### 2.2 Twilio Setup
+
+#### Account Configuration
+1. Create Twilio account
+2. Purchase phone number
+3. Configure webhook URLs
+4. Set up SMS and Voice services
+
+#### Webhook Configuration
 ```bash
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+# Configure Twilio webhooks
+curl -X POST https://api.twilio.com/2010-04-01/Accounts/YOUR_ACCOUNT_SID/IncomingPhoneNumbers/YOUR_PHONE_NUMBER_SID.json \
+  --data-urlencode "VoiceUrl=https://your-domain.com/webhook/twilio-voice" \
+  --data-urlencode "SmsUrl=https://your-domain.com/webhook/twilio-sms" \
+  -u YOUR_ACCOUNT_SID:YOUR_AUTH_TOKEN
 ```
 
-#### Login to Azure
-```bash
-az login
-az account set --subscription "your-subscription-id"
-```
+### 2.3 Google Sheets API Setup
 
-### 2.2 AKS Infrastructure Deployment
+#### Enable Google Sheets API
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Enable Google Sheets API
+3. Create service account
+4. Download credentials JSON
+5. Share spreadsheet with service account email
 
-#### Navigate to Azure AKS Directory
-```bash
-cd n8n/azure-aks/terraform
-```
-
-#### Configure Terraform Variables
-```hcl
-# terraform.tfvars
-azure_subscription_id = "your-subscription-id"
-azure_tenant_id = "your-tenant-id"
-location = "East US"
-environment = "production"
-cluster_name = "n8n-scalable-prod"
-
-# Resource Group
-resource_group_name = "rg-n8n-scalable-prod"
-
-# AKS Configuration
-kubernetes_version = "1.28"
-node_count = 3
-node_vm_size = "Standard_D2s_v3"
-
-# Database Configuration
-postgres_sku_name = "GP_Gen5_2"
-postgres_storage_mb = 51200
-
-# Redis Configuration
-redis_sku_name = "Standard"
-redis_family = "C"
-redis_capacity = 1
-
-# Tags
-tags = {
-  Project = "n8n-scalable"
-  Environment = "production"
-  Owner = "devops-team"
+#### Service Account Configuration
+```json
+{
+  "type": "service_account",
+  "project_id": "your-project-id",
+  "private_key_id": "your-key-id",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY\n-----END PRIVATE KEY-----\n",
+  "client_email": "your-service-account@your-project.iam.gserviceaccount.com",
+  "client_id": "your-client-id",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token"
 }
 ```
 
-#### Deploy Infrastructure
+## Phase 3: n8n Workflow Configuration
+
+### 3.1 Basic Workflow Setup
+
+#### Import Workflow Templates
 ```bash
-# Initialize Terraform
-terraform init
-
-# Plan deployment
-terraform plan -var-file="terraform.tfvars"
-
-# Apply configuration
-terraform apply -var-file="terraform.tfvars"
+# Download workflow templates
+curl -O https://raw.githubusercontent.com/your-org/voice-ai-workflows/main/tenant-inquiry-workflow.json
+curl -O https://raw.githubusercontent.com/your-org/voice-ai-workflows/main/60-day-notice-workflow.json
 ```
 
-#### Update Kubeconfig
-```bash
-az aks get-credentials --resource-group rg-n8n-scalable-prod --name n8n-scalable-prod
+#### Configure Credentials in n8n
+1. Open n8n interface (https://your-domain.com)
+2. Go to Settings → Credentials
+3. Add credentials for:
+   - Retell AI API
+   - Twilio
+   - Google Sheets
+   - HTTP Basic Auth
+
+### 3.2 Workflow Templates
+
+#### Tenant Inquiry Workflow
+```json
+{
+  "name": "Tenant Inquiry Handler",
+  "nodes": [
+    {
+      "name": "Twilio Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "path": "twilio-voice",
+        "httpMethod": "POST"
+      }
+    },
+    {
+      "name": "Retell AI Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://api.retell.ai/v1/process",
+        "method": "POST",
+        "headers": {
+          "Authorization": "Bearer {{$credentials.retellAI.apiKey}}"
+        }
+      }
+    },
+    {
+      "name": "Google Sheets Update",
+      "type": "n8n-nodes-base.googleSheets",
+      "parameters": {
+        "operation": "append",
+        "sheetId": "your-sheet-id",
+        "range": "A:Z"
+      }
+    }
+  ]
+}
 ```
 
-### 2.3 Deploy n8n Application
-
-#### Install Helm Chart
-```bash
-cd ../helm
-
-# Install n8n with Azure-optimized values
-helm upgrade --install n8n-scalable ./charts/n8n-scalable \
-  --namespace n8n \
-  --create-namespace \
-  --values values-azure.yaml \
-  --wait \
-  --timeout 10m
+#### 60-Day Notice Workflow
+```json
+{
+  "name": "60-Day Notice Automation",
+  "nodes": [
+    {
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hour",
+              "expression": "9"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Check Lease Expiration",
+      "type": "n8n-nodes-base.googleSheets",
+      "parameters": {
+        "operation": "read",
+        "sheetId": "your-sheet-id",
+        "range": "A:Z"
+      }
+    },
+    {
+      "name": "Generate Notice",
+      "type": "n8n-nodes-base.function",
+      "parameters": {
+        "functionCode": "// Generate 60-day notice logic"
+      }
+    },
+    {
+      "name": "Send via Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "parameters": {
+        "operation": "send",
+        "to": "{{$json.phone}}",
+        "message": "{{$json.notice_text}}"
+      }
+    }
+  ]
+}
 ```
 
-## Phase 3: Local Development Setup
+## Phase 4: Security Configuration
 
-### 3.1 Docker Desktop / Minikube
-
-#### Start Local Kubernetes
+### 4.1 Basic Security Setup
 ```bash
-# For Docker Desktop: Enable Kubernetes in settings
+# Configure firewall
+sudo ufw enable
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
 
-# For Minikube:
-minikube start --memory=8192 --cpus=4 --disk-size=20g
+# Set up fail2ban
+sudo yum install -y fail2ban
+sudo systemctl enable fail2ban
+sudo systemctl start fail2ban
 ```
 
-#### Deploy n8n Locally
+### 4.2 Environment Variables Security
 ```bash
-cd n8n/docker-desktop
+# Create secure environment file
+sudo nano /etc/environment
 
-# Copy configuration template
-cp helm/values-local.yaml.template helm/values-local.yaml
-
-# Edit values-local.yaml with your secure values
-# Replace CHANGE_ME_* placeholders
-
-# Deploy using script
-./deploy.sh
+# Add secure variables
+RETELL_AI_API_KEY=your-secure-key
+TWILIO_AUTH_TOKEN=your-secure-token
+GOOGLE_SHEETS_CREDENTIALS=your-secure-credentials
 ```
 
-## Phase 4: Monitoring and Observability
-
-### 4.1 Prometheus and Grafana Setup
-
-#### Install Monitoring Stack
-```bash
-# Add Prometheus Helm repository
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-
-# Install Prometheus
-helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace \
-  --values monitoring/prometheus-values.yaml
-
-# Install custom dashboards
-kubectl apply -f monitoring/grafana-dashboards/
+### 4.3 Database Security
+```sql
+-- Create dedicated database user
+CREATE USER 'n8n_user'@'localhost' IDENTIFIED BY 'secure_password';
+GRANT SELECT, INSERT, UPDATE, DELETE ON n8n.* TO 'n8n_user'@'localhost';
+FLUSH PRIVILEGES;
 ```
 
-### 4.2 Configure Alerts
+## Phase 5: Monitoring Setup
+
+### 5.1 Basic Monitoring
 ```yaml
-# monitoring/alert-rules.yaml
-groups:
-  - name: n8n-alerts
-    rules:
-      - alert: N8NHighQueueDepth
-        expr: n8n_queue_depth > 100
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "n8n queue depth is high"
-          
-      - alert: N8NWorkerDown
-        expr: up{job="n8n-worker"} == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "n8n worker is down"
-```
-
-## Phase 5: Security Configuration
-
-### 5.1 RBAC Setup
-```yaml
-# security/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: n8n-operator
-rules:
-- apiGroups: [""]
-  resources: ["pods", "services", "configmaps", "secrets"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: ["apps"]
-  resources: ["deployments", "replicasets"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-```
-
-### 5.2 Network Policies
-```yaml
-# security/network-policy.yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: n8n-network-policy
-  namespace: n8n
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: n8n-scalable
-  policyTypes:
-  - Ingress
-  - Egress
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          name: ingress-nginx
+# docker-compose.monitoring.yml
+version: '3.8'
+services:
+  prometheus:
+    image: prom/prometheus
     ports:
-    - protocol: TCP
-      port: 5678
-  egress:
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          name: n8n
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
     ports:
-    - protocol: TCP
-      port: 6379  # Redis
-    - protocol: TCP
-      port: 5432  # PostgreSQL
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+```
+
+### 5.2 Health Checks
+```bash
+# Create health check script
+#!/bin/bash
+# health-check.sh
+
+# Check n8n status
+curl -f http://localhost:5678/healthz || exit 1
+
+# Check database connection
+docker exec n8n-postgres pg_isready -U n8n || exit 1
+
+# Check external APIs
+curl -f https://api.retell.ai/health || exit 1
+curl -f https://api.twilio.com/health || exit 1
+
+echo "All services healthy"
 ```
 
 ## Phase 6: Testing and Validation
 
-### 6.1 Health Checks
+### 6.1 Component Testing
 ```bash
-# Run health tests
-cd n8n/shared/tests
-./health-check.sh
+# Test n8n installation
+curl http://localhost:5678
 
-# Expected output:
-# ✅ n8n main pods are healthy
-# ✅ n8n worker pods are healthy  
-# ✅ Redis connection successful
-# ✅ PostgreSQL connection successful
-# ✅ Queue processing functional
+# Test webhook endpoints
+curl -X POST http://localhost:5678/webhook/test \
+  -H "Content-Type: application/json" \
+  -d '{"test": "data"}'
+
+# Test database connection
+docker exec -it n8n-postgres psql -U n8n -c "SELECT 1;"
 ```
 
-### 6.2 Load Testing
+### 6.2 Integration Testing
 ```bash
-# Run load tests
-./load-test.sh --duration 300s --rps 100
+# Test Twilio webhook
+curl -X POST https://your-domain.com/webhook/twilio-voice \
+  -d "From=%2B1234567890&To=%2B0987654321&CallSid=test123"
 
-# Monitor scaling behavior
-kubectl get hpa -n n8n -w
+# Test Google Sheets integration
+# (Run test workflow in n8n interface)
 ```
 
-### 6.3 Failover Testing
+## Phase 7: Deployment Checklist
+
+### 7.1 Pre-Deployment
+- [ ] SSL certificates configured
+- [ ] Domain DNS properly configured
+- [ ] All API keys and credentials secured
+- [ ] Firewall rules configured
+- [ ] Backup procedures in place
+- [ ] Monitoring alerts configured
+
+### 7.2 Go-Live Checklist
+- [ ] Test all workflows end-to-end
+- [ ] Verify webhook endpoints accessible
+- [ ] Confirm phone number routing
+- [ ] Test emergency escalation procedures
+- [ ] Validate data synchronization
+- [ ] Document troubleshooting procedures
+
+## Troubleshooting
+
+### Common Issues
+
+#### n8n Connection Issues
 ```bash
-# Test Redis failover
-kubectl delete pod -n n8n redis-master-0
+# Check n8n logs
+docker logs n8n
 
-# Test database failover (AWS RDS/Azure Database)
-# Simulate AZ failure in cloud console
+# Restart n8n service
+docker-compose restart n8n
 
-# Verify recovery
-kubectl get pods -n n8n
+# Check port accessibility
+netstat -tlnp | grep 5678
 ```
 
-## Phase 7: Backup and Recovery
-
-### 7.1 Database Backups
+#### Webhook Issues
 ```bash
-# AWS RDS automated backups are configured via Terraform
-# Point-in-time recovery available for 7 days
+# Test webhook accessibility
+curl -I https://your-domain.com/webhook/test
 
-# Manual backup
-aws rds create-db-snapshot \
-  --db-instance-identifier n8n-scalable-prod-postgres \
-  --db-snapshot-identifier n8n-manual-backup-$(date +%Y%m%d)
+# Check SSL certificate
+openssl s_client -connect your-domain.com:443
+
+# Verify DNS resolution
+nslookup your-domain.com
 ```
 
-### 7.2 Redis Persistence
-```yaml
-# Redis persistence is configured in Helm values
-redis:
-  master:
-    persistence:
-      enabled: true
-      size: 10Gi
-      storageClass: "gp3"
-    # AOF and RDB persistence enabled
-    configmap: |
-      save 900 1
-      save 300 10
-      appendonly yes
-```
-
-## Phase 8: Operational Procedures
-
-### 8.1 Scaling Operations
+#### Database Issues
 ```bash
-# Manual scaling
-kubectl scale deployment n8n-scalable-worker --replicas=10 -n n8n
+# Check database status
+docker exec n8n-postgres pg_isready
 
-# Update HPA limits
-kubectl patch hpa n8n-scalable-worker-hpa -n n8n -p '{"spec":{"maxReplicas":30}}'
+# View database logs
+docker logs n8n-postgres
+
+# Connect to database
+docker exec -it n8n-postgres psql -U n8n
 ```
 
-### 8.2 Updates and Maintenance
+## Maintenance Procedures
+
+### 6.1 Regular Maintenance
+- **Weekly**: Review logs and performance metrics
+- **Monthly**: Update SSL certificates if needed
+- **Quarterly**: Update n8n and dependencies
+- **Annually**: Review and rotate API keys
+
+### 6.2 Backup Procedures
 ```bash
-# Rolling update
-helm upgrade n8n-scalable ./charts/n8n-scalable \
-  --namespace n8n \
-  --values values-production.yaml \
-  --set image.tag=1.20.0
+# Backup n8n data
+docker exec n8n tar -czf /tmp/n8n-backup.tar.gz /home/node/.n8n
+docker cp n8n:/tmp/n8n-backup.tar.gz ./backups/
 
-# Monitor rollout
-kubectl rollout status deployment/n8n-scalable-main -n n8n
+# Backup database
+docker exec n8n-postgres pg_dump -U n8n n8n > ./backups/database-backup.sql
 ```
 
-### 8.3 Troubleshooting
-```bash
-# Debug pod issues
-kubectl describe pod <pod-name> -n n8n
-kubectl logs <pod-name> -n n8n --previous
-
-# Debug service issues
-kubectl get endpoints -n n8n
-nslookup n8n-scalable-main.n8n.svc.cluster.local
-
-# Debug ingress issues
-kubectl describe ingress n8n-scalable -n n8n
-```
-
-## Cost Optimization
-
-### Resource Right-Sizing
-- Monitor resource utilization with Prometheus
-- Adjust node instance types based on actual usage
-- Use spot instances for worker nodes where appropriate
-
-### Auto-Scaling Configuration
-```yaml
-# Aggressive scaling for cost optimization
-autoscaling:
-  enabled: true
-  minReplicas: 1
-  maxReplicas: 50
-  targetCPUUtilizationPercentage: 60
-  targetMemoryUtilizationPercentage: 70
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Percent
-        value: 50
-        periodSeconds: 60
-```
-
-## Security Best Practices
-
-### 1. Secrets Management
-- Use cloud-native secret management (AWS Secrets Manager, Azure Key Vault)
-- Rotate secrets regularly
-- Never commit secrets to version control
-
-### 2. Network Security
-- Implement network policies
-- Use private subnets for worker nodes
-- Enable VPC flow logs for audit trails
-
-### 3. Image Security
-- Use official n8n images
-- Scan images for vulnerabilities
-- Implement admission controllers
-
-### 4. Access Control
-- Implement RBAC with least privilege
-- Use service accounts for pod-to-pod communication
-- Enable audit logging
-
-## Disaster Recovery
-
-### Multi-Region Setup
-```bash
-# Deploy to secondary region
-cd n8n/aws-eks/terraform
-terraform workspace new dr-region
-terraform apply -var-file="terraform-dr.tfvars"
-```
-
-### Backup Strategy
-- **Database**: Automated backups with point-in-time recovery
-- **Redis**: AOF and RDB persistence with cross-region replication
-- **Configuration**: GitOps with infrastructure as code
-- **Workflows**: Regular exports and version control
-
-## Next Steps
-
-1. **Performance Tuning**: Optimize based on actual workload patterns
-2. **Advanced Monitoring**: Implement custom metrics and dashboards
-3. **Multi-Tenancy**: Implement namespace-based isolation
-4. **GitOps**: Implement ArgoCD for continuous deployment
-5. **Service Mesh**: Consider Istio for advanced traffic management 
+This infrastructure setup provides a solid foundation for the Voice AI Property Management POC with proper security, monitoring, and maintenance procedures. 
